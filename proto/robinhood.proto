@@ -59,3 +59,27 @@ message Swap {
   uint64 block_timestamp = 11;
   uint64 log_index = 12;
 }
+
+// ── map_stock_swaps ──────────────────────────────────────────────────────────
+// V4 swaps FILTERED to pools that contain a Robinhood stock token (auto-discovered
+// via store_stock_tokens from the ERC-8056 transfers) and resolved to their tokens
+// (via store_pools from V4 Initialize). Emits the stock side + quote side + decimals.
+// AMM price = (quote_amount / 10^quote_decimals) / (stock_amount / 10^stock_decimals)
+// — a one-line downstream calc; join with map_oracle_updates for the basis.
+message StockSwaps {
+  repeated StockSwap swaps = 1;
+}
+message StockSwap {
+  string pool_id = 1;
+  string stock_token = 2;
+  string quote_token = 3;      // the other side (USDG or WETH)
+  string stock_amount = 4;     // abs raw amount of the stock token
+  string quote_amount = 5;     // abs raw amount of the quote token
+  uint32 stock_decimals = 6;   // 18
+  uint32 quote_decimals = 7;   // USDG=6, WETH=18
+  bool usdg_quote = 8;         // true if quote is USDG (~ $1)
+  string tx_hash = 9;
+  uint64 block_number = 10;
+  uint64 block_timestamp = 11;
+  uint64 log_index = 12;
+}

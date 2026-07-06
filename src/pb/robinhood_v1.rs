@@ -90,3 +90,38 @@ pub struct Swap {
     #[prost(uint64, tag = "12")]
     pub log_index: u64,
 }
+
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StockSwaps {
+    #[prost(message, repeated, tag = "1")]
+    pub swaps: ::prost::alloc::vec::Vec<StockSwap>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StockSwap {
+    #[prost(string, tag = "1")]
+    pub pool_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub stock_token: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub quote_token: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub stock_amount: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub quote_amount: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "6")]
+    pub stock_decimals: u32,
+    #[prost(uint32, tag = "7")]
+    pub quote_decimals: u32,
+    #[prost(bool, tag = "8")]
+    pub usdg_quote: bool,
+    #[prost(string, tag = "9")]
+    pub tx_hash: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "10")]
+    pub block_number: u64,
+    #[prost(uint64, tag = "11")]
+    pub block_timestamp: u64,
+    #[prost(uint64, tag = "12")]
+    pub log_index: u64,
+}

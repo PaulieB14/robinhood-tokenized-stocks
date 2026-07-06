@@ -2,9 +2,12 @@ mod pb;
 
 use num_bigint::BigInt as SignedInt;
 use pb::robinhood_v1::{
-    OracleUpdate, OracleUpdates, ScaledTransfer, ScaledTransfers, Swap, Swaps,
+    OracleUpdate, OracleUpdates, ScaledTransfer, ScaledTransfers, StockSwap, StockSwaps, Swap, Swaps,
 };
 use substreams::scalar::BigInt;
+use substreams::store::{
+    StoreGet, StoreGetInt64, StoreGetString, StoreNew, StoreSet, StoreSetInt64, StoreSetString,
+};
 use substreams::Hex;
 use substreams_ethereum::pb::eth::v2 as eth;
 
@@ -15,8 +18,12 @@ const ANSWER_UPDATED: [u8; 32] =
     hex_literal::hex!("0559884fd3a460db3073b7fc896cc77986f16e378210ded43186175bf646fc5f");
 const V4_SWAP: [u8; 32] =
     hex_literal::hex!("40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f");
+const INITIALIZE: [u8; 32] =
+    hex_literal::hex!("dd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438");
 
-// last 8 bytes of a 32-byte word as big-endian u64 (fine for timestamps / small uints)
+// USDG (Global Dollar), the real Robinhood Chain stable, 6 decimals.
+const USDG: &str = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+
 fn word_u64(w: &[u8]) -> u64 {
     let mut b = [0u8; 8];
     b.copy_from_slice(&w[24..32]);
@@ -78,7 +85,6 @@ fn map_oracle_updates(block: eth::Block) -> Result<OracleUpdates, substreams::er
         let tx_hash = format!("0x{}", Hex(&trace.hash));
         if let Some(receipt) = trace.receipt.as_ref() {
             for log in receipt.logs.iter() {
-                // AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt)
                 if log.topics.len() == 3
                     && log.topics[0].as_slice() == ANSWER_UPDATED
                     && log.data.len() >= 32
@@ -112,9 +118,6 @@ fn map_v4_swaps(block: eth::Block) -> Result<Swaps, substreams::errors::Error> {
         let tx_hash = format!("0x{}", Hex(&trace.hash));
         if let Some(receipt) = trace.receipt.as_ref() {
             for log in receipt.logs.iter() {
-                // Swap(bytes32 indexed id, address indexed sender, int128 amount0,
-                //      int128 amount1, uint160 sqrtPriceX96, uint128 liquidity,
-                //      int24 tick, uint24 fee)
                 if log.topics.len() == 3
                     && log.topics[0].as_slice() == V4_SWAP
                     && log.data.len() >= 192
@@ -139,4 +142,106 @@ fn map_v4_swaps(block: eth::Block) -> Result<Swaps, substreams::errors::Error> {
         }
     }
     Ok(Swaps { swaps })
+}
+
+// ── stores (v0.3.0) ──────────────────────────────────────────────────────────
+
+// Every address that emits TransferWithScaledUI is a Robinhood stock token.
+// Auto-discovered — no hardcoded ticker list.
+#[substreams::handlers::store]
+fn store_stock_tokens(transfers: ScaledTransfers, store: StoreSetInt64) {
+    for t in transfers.transfers.iter() {
+        store.set(0, &t.token, &1i64);
+    }
+}
+
+// V4 poolId -> "currency0,currency1" from Initialize events.
+#[substreams::handlers::store]
+fn store_pools(block: eth::Block, store: StoreSetString) {
+    for trace in block.transaction_traces.iter() {
+        if trace.status != 1 {
+            continue;
+        }
+        if let Some(receipt) = trace.receipt.as_ref() {
+            for log in receipt.logs.iter() {
+                if log.topics.len() == 4 && log.topics[0].as_slice() == INITIALIZE {
+                    let pool = format!("0x{}", Hex(&log.topics[1]));
+                    let c0 = format!("0x{}", Hex(&log.topics[2][12..32]));
+                    let c1 = format!("0x{}", Hex(&log.topics[3][12..32]));
+                    store.set(log.ordinal, &pool, &format!("{},{}", c0, c1));
+                }
+            }
+        }
+    }
+}
+
+// V4 swaps filtered to stock pools + resolved to their tokens.
+#[substreams::handlers::map]
+fn map_stock_swaps(
+    block: eth::Block,
+    stock_tokens: StoreGetInt64,
+    pools: StoreGetString,
+) -> Result<StockSwaps, substreams::errors::Error> {
+    let block_number = block.number;
+    let block_timestamp = block_ts(&block);
+    let mut swaps = Vec::new();
+    for trace in block.transaction_traces.iter() {
+        if trace.status != 1 {
+            continue;
+        }
+        let tx_hash = format!("0x{}", Hex(&trace.hash));
+        if let Some(receipt) = trace.receipt.as_ref() {
+            for log in receipt.logs.iter() {
+                if log.topics.len() != 3
+                    || log.topics[0].as_slice() != V4_SWAP
+                    || log.data.len() < 64
+                {
+                    continue;
+                }
+                let pool = format!("0x{}", Hex(&log.topics[1]));
+                let meta = match pools.get_last(&pool) {
+                    Some(m) => m,
+                    None => continue,
+                };
+                let mut parts = meta.split(',');
+                let c0 = parts.next().unwrap_or("").to_string();
+                let c1 = parts.next().unwrap_or("").to_string();
+                let c0_stock = stock_tokens.get_last(&c0).is_some();
+                let c1_stock = stock_tokens.get_last(&c1).is_some();
+                if !c0_stock && !c1_stock {
+                    continue;
+                }
+                let d = &log.data;
+                let a0 = SignedInt::from_signed_bytes_be(&d[0..32])
+                    .to_string()
+                    .trim_start_matches('-')
+                    .to_string();
+                let a1 = SignedInt::from_signed_bytes_be(&d[32..64])
+                    .to_string()
+                    .trim_start_matches('-')
+                    .to_string();
+                let (stock_token, quote_token, stock_amount, quote_amount) = if c0_stock {
+                    (c0, c1, a0, a1)
+                } else {
+                    (c1, c0, a1, a0)
+                };
+                let usdg_quote = quote_token.eq_ignore_ascii_case(USDG);
+                swaps.push(StockSwap {
+                    pool_id: pool,
+                    stock_token,
+                    quote_token,
+                    stock_amount,
+                    quote_amount,
+                    stock_decimals: 18,
+                    quote_decimals: if usdg_quote { 6 } else { 18 },
+                    usdg_quote,
+                    tx_hash: tx_hash.clone(),
+                    block_number,
+                    block_timestamp,
+                    log_index: log.block_index as u64,
+                });
+            }
+        }
+    }
+    Ok(StockSwaps { swaps })
 }

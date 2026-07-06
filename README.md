@@ -1,41 +1,51 @@
 # robinhood_tokenized_stocks
 
 Substreams for **Robinhood Chain** (`eip155:4663`) tokenized stocks — the first
-package indexing the chain's ERC-8056 scaled-UI token events.
+package indexing the chain's stock-token data. Streams off Pinax's firehose.
 
 ## Why this exists
 
-Robinhood Chain's tokenized stocks (NVDA, AAPL, TSLA, …) are ERC-20s that also
-emit **`TransferWithScaledUI(address indexed from, address indexed to, uint256
-value, uint256 uiValue)`** (topic0 `0x37e7f0db430edc9dd31bc66f25f8449353aa0818f503b906747dd8f286cd3802`).
-The `uiValue` is the scaled/adjusted amount. **Indexing the naive ERC-20 `Transfer`
-overstates supply/balances (~56% per RWA.xyz)** — this package captures `uiValue`
-so downstream balances stay correct.
-
-Matching is by **topic0**, so it auto-captures every ERC-8056 token on the chain —
-no address list to maintain as Robinhood adds tickers.
+Robinhood Chain's tokenized stocks (NVDA, AAPL, TSLA, …) are ERC-20s that also emit
+**`TransferWithScaledUI(from, to, value, uiValue)`** (ERC-8056, topic0 `0x37e7f0db…`).
+Index the `uiValue`, not the naive `Transfer` — naive supply indexing overstates ~56%
+(per RWA.xyz). Everything here matches by **topic0**, so no address lists to maintain.
 
 ## Modules
 
-| Module | Kind | Output |
-|---|---|---|
-| `map_scaled_transfers` | map | `robinhood.v1.ScaledTransfers` — `{token, from, to, value, ui_value, tx_hash, block_number, block_timestamp, log_index}` per event |
+| Module | Kind | Output | Notes |
+|---|---|---|---|
+| `map_scaled_transfers` | map | `ScaledTransfers` | ERC-8056 stock-token transfers with correct `ui_value` |
+| `map_oracle_updates` | map | `OracleUpdates` | Chainlink `AnswerUpdated` — on-chain fair price per feed (equities 8-dp) |
+| `map_v4_swaps` | map | `Swaps` | all Uniswap V4 `Swap` events off the PoolManager |
+| `store_stock_tokens` | store | — | auto-discovered set of stock-token addresses (from the transfers) |
+| `store_pools` | store | — | V4 `poolId → currency0,currency1` (from `Initialize`) |
+| `map_stock_swaps` | map | `StockSwaps` | V4 swaps **filtered to stock pools** + resolved to tokens, with amounts + decimals |
+
+**The oracle-vs-AMM basis** is a one-line downstream join: take the AMM price from
+`map_stock_swaps` (`quote_amount/10^quote_decimals ÷ stock_amount/10^stock_decimals`) and
+the fair price from `map_oracle_updates`, per stock. The package gives you both sides.
 
 ## Run
 
 ```bash
 export SUBSTREAMS_API_TOKEN=<your Pinax substreams token>
-substreams run robinhood-tokenized-stocks-v0.1.0.spkg map_scaled_transfers \
-  -e robinhood.substreams.pinax.network:443 \
-  --start-block <recent> --stop-block +500
+substreams gui robinhood-tokenized-stocks@v0.3.0 map_scaled_transfers \
+  -e robinhood.substreams.pinax.network:443 --start-block <recent>
 ```
 
-Verified live: 5,000 blocks → 114 scaled transfers across 7 stock tokens, all
-fields populated.
+Note: the store-backed `map_stock_swaps` backprocesses store state from genesis, so it
+needs a plan that allows it (paid tier) or a continuous sink; free tiers cap processed
+blocks. The three stateless maps run in any small window.
+
+## Verification
+
+`map_scaled_transfers`, `map_oracle_updates`, and `map_v4_swaps` were live-run against
+Pinax and every field cross-checked against the raw on-chain logs (including signed
+int128/int256 for swap amounts and ticks). `map_stock_swaps` reuses those verified
+decoders plus a standard store join.
 
 ## Roadmap
 
-- `map_oracle_updates` — Chainlink `AnswerUpdated` (on-chain fair price per stock)
-- `map_stock_swaps` — Uniswap V2/V3/V4 `Swap` on stock-token pools (AMM price)
-- multiplier-update handler — track the ERC-8056 scaling multiplier for adjusted supply
-- `map_basis` — oracle vs AMM premium/discount, market-hours-aware (the derived signal)
+- multiplier-update handler → adjusted supply
+- `store_latest` prices + `map_basis` (market-hours-aware premium) — if AMM stock volume warrants it
+- `substreams-sink-files` → parquet / `substreams-sink-sql` → ClickHouse
