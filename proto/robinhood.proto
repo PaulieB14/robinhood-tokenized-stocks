@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package robinhood.v1;
+
+// A batch of ERC-8056 TransferWithScaledUI events for one block.
+message ScaledTransfers {
+  repeated ScaledTransfer transfers = 1;
+}
+
+// One TransferWithScaledUI(from, to, value, uiValue) event from a Robinhood
+// Chain tokenized-stock token. `value` is the raw ERC-20 amount; `ui_value` is
+// the scaled/adjusted amount — index THIS, not naive Transfer, or supply/
+// balances overstate by ~56%.
+message ScaledTransfer {
+  string token = 1;            // emitting token contract (the stock token)
+  string from = 2;
+  string to = 3;
+  string value = 4;            // raw uint256, decimal string
+  string ui_value = 5;         // scaled UI uint256, decimal string
+  string tx_hash = 6;
+  uint64 block_number = 7;
+  uint64 block_timestamp = 8;  // unix seconds
+  uint64 log_index = 9;
+}
