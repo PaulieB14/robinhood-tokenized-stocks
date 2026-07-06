@@ -2,15 +2,12 @@ syntax = "proto3";
 
 package robinhood.v1;
 
-// A batch of ERC-8056 TransferWithScaledUI events for one block.
+// ── map_scaled_transfers ─────────────────────────────────────────────────────
+// ERC-8056 TransferWithScaledUI events for tokenized stocks. Index ui_value, not
+// naive Transfer (naive overstates supply ~56%).
 message ScaledTransfers {
   repeated ScaledTransfer transfers = 1;
 }
-
-// One TransferWithScaledUI(from, to, value, uiValue) event from a Robinhood
-// Chain tokenized-stock token. `value` is the raw ERC-20 amount; `ui_value` is
-// the scaled/adjusted amount — index THIS, not naive Transfer, or supply/
-// balances overstate by ~56%.
 message ScaledTransfer {
   string token = 1;            // emitting token contract (the stock token)
   string from = 2;
@@ -21,4 +18,44 @@ message ScaledTransfer {
   uint64 block_number = 7;
   uint64 block_timestamp = 8;  // unix seconds
   uint64 log_index = 9;
+}
+
+// ── map_oracle_updates ───────────────────────────────────────────────────────
+// Chainlink AnswerUpdated (AggregatorV3Interface push feeds). Captures every feed
+// on the chain by topic0; the equity feeds dominate. answer has the feed's own
+// decimals (equities = 8).
+message OracleUpdates {
+  repeated OracleUpdate updates = 1;
+}
+message OracleUpdate {
+  string aggregator = 1;       // emitting Chainlink aggregator contract
+  string answer = 2;           // int256 price, decimal string (feed decimals, eq=8)
+  string round_id = 3;
+  uint64 updated_at = 4;       // unix seconds (from the event payload)
+  string tx_hash = 5;
+  uint64 block_number = 6;
+  uint64 block_timestamp = 7;
+  uint64 log_index = 8;
+}
+
+// ── map_v4_swaps ─────────────────────────────────────────────────────────────
+// Uniswap V4 Swap events off the PoolManager singleton. Captures ALL v4 swaps by
+// topic0 (stock + memecoin); filter by pool_id -> tokens downstream. Stock-pool
+// filtering + USD price derivation land with the pool store in a later version.
+message Swaps {
+  repeated Swap swaps = 1;
+}
+message Swap {
+  string pool_id = 1;          // v4 pool id (bytes32)
+  string sender = 2;
+  string amount0 = 3;          // int128, signed decimal string
+  string amount1 = 4;          // int128, signed decimal string
+  string sqrt_price_x96 = 5;   // uint160
+  string liquidity = 6;        // uint128
+  string tick = 7;             // int24, signed decimal string
+  uint64 fee = 8;              // uint24
+  string tx_hash = 9;
+  uint64 block_number = 10;
+  uint64 block_timestamp = 11;
+  uint64 log_index = 12;
 }

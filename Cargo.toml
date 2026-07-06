@@ -12,6 +12,7 @@ substreams = "0.6"
 substreams-ethereum = "0.10"
 prost = "0.13"
 hex-literal = "0.4"
+num-bigint = "0.4"
 
 [profile.release]
 lto = true

@@ -1,15 +1,16 @@
 specVersion: v0.1.0
 package:
   name: robinhood_tokenized_stocks
-  version: v0.1.0
+  version: v0.2.0
   url: https://github.com/PaulieB14/robinhood-tokenized-stocks
   image: ./robinhood.png
   description: >-
-    Robinhood Chain (eip155:4663) tokenized stocks. map_scaled_transfers emits
-    every ERC-8056 TransferWithScaledUI event (topic0 0x37e7f0db…), auto-capturing
-    all Robinhood stock tokens with the scaled ui_value so supply/balances stay
-    correct — naive ERC-20 Transfer indexing overstates supply ~56%. Stream against
-    Pinax: -e robinhood.substreams.pinax.network:443
+    Robinhood Chain (eip155:4663) tokenized stocks — raw data layer. Three maps:
+    map_scaled_transfers (ERC-8056 TransferWithScaledUI, correct ui_value — naive
+    Transfer overstates supply ~56%), map_oracle_updates (Chainlink AnswerUpdated
+    push feeds, the on-chain fair price per stock), and map_v4_swaps (Uniswap V4
+    Swap events). All match by topic0 (no address lists). Stream against Pinax:
+    -e robinhood.substreams.pinax.network:443
 
 protobuf:
   files:
@@ -32,3 +33,19 @@ modules:
       - source: sf.ethereum.type.v2.Block
     output:
       type: proto:robinhood.v1.ScaledTransfers
+
+  - name: map_oracle_updates
+    kind: map
+    initialBlock: 0
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:robinhood.v1.OracleUpdates
+
+  - name: map_v4_swaps
+    kind: map
+    initialBlock: 0
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:robinhood.v1.Swaps
