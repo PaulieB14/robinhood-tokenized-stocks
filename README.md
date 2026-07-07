@@ -50,8 +50,12 @@ it (paid tier) or a continuous sink; free tiers cap processed blocks.
 `map_scaled_transfers`, `map_oracle_updates`, and `map_v4_swaps` were live-run against
 Pinax and every field cross-checked against the raw on-chain logs (including signed
 int128/int256 for swap amounts and ticks). `db_out` was live-run over a recent 5,000-block
-window and emitted all three tables (`transfers` / `oracle_updates` / `swaps`) with signed
-values intact. `map_stock_swaps` reuses those verified decoders plus a standard store join.
+window (2,677 transfers + 299 swaps + 12 oracle rows) and every table was then
+**cross-checked against raw on-chain logs via RPC** — each field re-decoded from the
+canonical ABI and compared row-by-row (incl. large negative int128 swap amounts and
+negative ticks), plus a per-block `eth_getLogs` completeness pass confirming zero dropped
+and zero duplicated rows. `map_stock_swaps` reuses those verified decoders plus a standard
+store join.
 
 ## Roadmap
 
