@@ -1,7 +1,7 @@
 specVersion: v0.1.0
 package:
   name: robinhood_tokenized_stocks
-  version: v0.3.0
+  version: v0.4.0
   url: https://github.com/PaulieB14/robinhood-tokenized-stocks
   image: ./robinhood.png
   description: >-
@@ -16,6 +16,7 @@ package:
 protobuf:
   files:
     - robinhood.proto
+    - sf/substreams/sink/database/v1/database.proto
   importPaths:
     - ./proto
 
@@ -76,3 +77,15 @@ modules:
       - store: store_pools
     output:
       type: proto:robinhood.v1.StockSwaps
+
+  # db_out: DatabaseChanges (tables transfers/oracle_updates/swaps) for a
+  # substreams-websocket fan-out or SQL sink. Stateless -> stream live, no backprocess.
+  - name: db_out
+    kind: map
+    initialBlock: 0
+    inputs:
+      - map: map_scaled_transfers
+      - map: map_oracle_updates
+      - map: map_v4_swaps
+    output:
+      type: proto:sf.substreams.sink.database.v1.DatabaseChanges

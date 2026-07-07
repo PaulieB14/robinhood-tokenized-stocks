@@ -9,6 +9,8 @@ use substreams::store::{
     StoreGet, StoreGetInt64, StoreGetString, StoreNew, StoreSet, StoreSetInt64, StoreSetString,
 };
 use substreams::Hex;
+use substreams_database_change::pb::database::DatabaseChanges;
+use substreams_database_change::tables::Tables;
 use substreams_ethereum::pb::eth::v2 as eth;
 
 // Event topic0s, all verified against on-chain logs on Robinhood Chain (eip155:4663).
@@ -244,4 +246,66 @@ fn map_stock_swaps(
         }
     }
     Ok(StockSwaps { swaps })
+}
+
+// ── db_out (v0.4.0) ──────────────────────────────────────────────────────────
+// Emit the three stateless feeds as sf.substreams.sink.database.v1.DatabaseChanges
+// (tables: transfers / oracle_updates / swaps) so a substreams-websocket server or
+// a SQL sink can fan them out. Depends only on stateless maps -> no backprocess.
+#[substreams::handlers::map]
+fn db_out(
+    transfers: ScaledTransfers,
+    oracle: OracleUpdates,
+    swaps: Swaps,
+) -> Result<DatabaseChanges, substreams::errors::Error> {
+    let mut tables = Tables::new();
+
+    for t in transfers.transfers {
+        let pk = format!("{}-{}", t.tx_hash, t.log_index);
+        tables
+            .create_row("transfers", pk)
+            .set("token", t.token)
+            .set("from", t.from)
+            .set("to", t.to)
+            .set("value", t.value)
+            .set("ui_value", t.ui_value)
+            .set("tx_hash", t.tx_hash)
+            .set("block_num", t.block_number.to_string())
+            .set("timestamp", t.block_timestamp.to_string())
+            .set("log_index", t.log_index.to_string());
+    }
+
+    for o in oracle.updates {
+        let pk = format!("{}-{}", o.tx_hash, o.log_index);
+        tables
+            .create_row("oracle_updates", pk)
+            .set("aggregator", o.aggregator)
+            .set("answer", o.answer)
+            .set("round_id", o.round_id)
+            .set("updated_at", o.updated_at.to_string())
+            .set("tx_hash", o.tx_hash)
+            .set("block_num", o.block_number.to_string())
+            .set("timestamp", o.block_timestamp.to_string())
+            .set("log_index", o.log_index.to_string());
+    }
+
+    for s in swaps.swaps {
+        let pk = format!("{}-{}", s.tx_hash, s.log_index);
+        tables
+            .create_row("swaps", pk)
+            .set("pool_id", s.pool_id)
+            .set("sender", s.sender)
+            .set("amount0", s.amount0)
+            .set("amount1", s.amount1)
+            .set("sqrt_price_x96", s.sqrt_price_x96)
+            .set("liquidity", s.liquidity)
+            .set("tick", s.tick)
+            .set("fee", s.fee.to_string())
+            .set("tx_hash", s.tx_hash)
+            .set("block_num", s.block_number.to_string())
+            .set("timestamp", s.block_timestamp.to_string())
+            .set("log_index", s.log_index.to_string());
+    }
+
+    Ok(tables.to_database_changes())
 }
