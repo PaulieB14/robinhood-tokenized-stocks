@@ -21,6 +21,19 @@ Index the `uiValue`, not the naive `Transfer` — naive supply indexing overstat
 | `store_pools` | store | — | V4 `poolId → currency0,currency1` (from `Initialize`) |
 | `map_stock_swaps` | map | `StockSwaps` | V4 swaps **filtered to stock pools** + resolved to tokens, with amounts + decimals |
 | `db_out` | map | `DatabaseChanges` | the three stateless feeds as `transfers` / `oracle_updates` / `swaps` rows — ready for a substreams-websocket fan-out or SQL/Parquet sink |
+| `erc8056_transfers` | map | `DatabaseChanges` | single `erc8056_transfers` table matching Pinax's canonical `erc20_transfers` column layout **plus** the ERC-8056 `ui_amount` — drop-in for `ws.pinax.network` |
+
+### `erc8056_transfers` table (for Pinax websocket hosting)
+
+Mirrors [`pinax-network/substreams-evm` `erc20_transfers`](https://github.com/pinax-network/substreams-evm/blob/main/evm-transfers/src/erc20_transfers.rs)
+column-for-column, so it can be hosted directly on `ws.pinax.network`. Composite PK
+`(minute, timestamp, block_num, tx_index, log_index, block_hash)`; columns: block context
+(`block_num`, `block_hash`, `timestamp`, `minute`), log context (`log_index`,
+`log_block_index`, `log_address`, `log_ordinal`, `log_topics`, `log_data`), tx context
+(`tx_index`, `tx_hash`, `tx_from`, `tx_to`, `tx_nonce`, `tx_gas_price`, `tx_gas_limit`,
+`tx_gas_used`, `tx_value`), and the event: `from`, `to`, `amount` (raw `value`) **+
+`ui_amount` (ERC-8056 scaled-UI value)** — the field that makes this standard worth
+indexing. Emits a companion `blocks` row per block that carries ≥1 transfer.
 
 **The oracle-vs-AMM basis** is a one-line downstream join: take the AMM price from
 `map_stock_swaps` (`quote_amount/10^quote_decimals ÷ stock_amount/10^stock_decimals`) and
@@ -32,11 +45,11 @@ the fair price from `map_oracle_updates`, per stock. The package gives you both 
 export SUBSTREAMS_API_TOKEN=<your Pinax substreams token>
 
 # any stateless map (transfers / oracle / swaps) — runs in any small window, cheap
-substreams gui robinhood-tokenized-stocks@v0.4.0 map_scaled_transfers \
+substreams gui robinhood-tokenized-stocks@v0.5.0 map_scaled_transfers \
   -e robinhood.substreams.pinax.network:443 --start-block <recent>
 
-# db_out — all three feeds as DatabaseChanges, ready for a WS/SQL/Parquet sink
-substreams run robinhood-tokenized-stocks@v0.4.0 db_out \
+# erc8056_transfers — Pinax-convention table, ready for ws.pinax.network
+substreams run robinhood-tokenized-stocks@v0.5.0 erc8056_transfers \
   -e robinhood.substreams.pinax.network:443 --start-block <recent> --stop-block +5000
 ```
 
@@ -54,8 +67,10 @@ window (2,677 transfers + 299 swaps + 12 oracle rows) and every table was then
 **cross-checked against raw on-chain logs via RPC** — each field re-decoded from the
 canonical ABI and compared row-by-row (incl. large negative int128 swap amounts and
 negative ticks), plus a per-block `eth_getLogs` completeness pass confirming zero dropped
-and zero duplicated rows. `map_stock_swaps` reuses those verified decoders plus a standard
-store join.
+and zero duplicated rows. `erc8056_transfers` was live-run over a recent 1,500-block window
+(1,398 transfer rows + block rows) with every Pinax-layout column populated, including full
+tx context and the ERC-8056 `ui_amount`. `map_stock_swaps` reuses those verified decoders
+plus a standard store join.
 
 ## Roadmap
 

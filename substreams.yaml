@@ -1,7 +1,7 @@
 specVersion: v0.1.0
 package:
   name: robinhood_tokenized_stocks
-  version: v0.4.0
+  version: v0.5.0
   url: https://github.com/PaulieB14/robinhood-tokenized-stocks
   image: ./robinhood.png
   description: >-
@@ -87,5 +87,16 @@ modules:
       - map: map_scaled_transfers
       - map: map_oracle_updates
       - map: map_v4_swaps
+    output:
+      type: proto:sf.substreams.sink.database.v1.DatabaseChanges
+
+  # erc8056_transfers: single-table DatabaseChanges matching Pinax's canonical
+  # erc20_transfers column layout (pinax-network/substreams-evm) + ERC-8056
+  # ui_amount, so ws.pinax.network can host it directly as `erc8056_transfers`.
+  - name: erc8056_transfers
+    kind: map
+    initialBlock: 0
+    inputs:
+      - source: sf.ethereum.type.v2.Block
     output:
       type: proto:sf.substreams.sink.database.v1.DatabaseChanges

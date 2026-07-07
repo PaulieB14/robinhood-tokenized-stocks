@@ -309,3 +309,98 @@ fn db_out(
 
     Ok(tables.to_database_changes())
 }
+
+// ── erc8056_transfers (v0.5.0) ────────────────────────────────────────────────
+// A DatabaseChanges table that mirrors the column layout of Pinax's canonical
+// erc20_transfers (pinax-network/substreams-evm) so ws.pinax.network can host it
+// directly as `erc8056_transfers`. Same block/tx/log context columns + event
+// from/to/amount, PLUS the ERC-8056 `ui_amount` (scaled-UI value) — the reason
+// this token standard exists. Composite PK matches Pinax: (minute, timestamp,
+// block_num, tx_index, log_index, block_hash).
+fn hex0x(b: &[u8]) -> String {
+    format!("0x{}", Hex(b))
+}
+
+fn bigint_dec(bi: Option<&eth::BigInt>) -> String {
+    bi.map(|b| BigInt::from_unsigned_bytes_be(&b.bytes).to_string())
+        .unwrap_or_default()
+}
+
+#[substreams::handlers::map]
+fn erc8056_transfers(block: eth::Block) -> Result<DatabaseChanges, substreams::errors::Error> {
+    let mut tables = Tables::new();
+    let block_num = block.number;
+    let block_hash = hex0x(&block.hash);
+    let ts = block_ts(&block) as i64;
+    let minute = ts / 60;
+    let mut any = false;
+
+    for trace in block.transaction_traces.iter() {
+        if trace.status != 1 {
+            continue;
+        }
+        let receipt = match trace.receipt.as_ref() {
+            Some(r) => r,
+            None => continue,
+        };
+        for (log_index, log) in receipt.logs.iter().enumerate() {
+            if log.topics.len() != 3
+                || log.topics[0].as_slice() != TRANSFER_WITH_SCALED_UI
+                || log.data.len() < 64
+            {
+                continue;
+            }
+            any = true;
+            let key = [
+                ("minute", minute.to_string()),
+                ("timestamp", ts.to_string()),
+                ("block_num", block_num.to_string()),
+                ("tx_index", trace.index.to_string()),
+                ("log_index", log_index.to_string()),
+                ("block_hash", block_hash.clone()),
+            ];
+            let row = tables.create_row("erc8056_transfers", key);
+            // clock
+            row.set("block_num", block_num);
+            row.set("block_hash", &block_hash);
+            row.set("timestamp", ts);
+            row.set("minute", minute);
+            // log (Transactions -> Log -> Data)
+            row.set("log_index", log_index as u32);
+            row.set("log_block_index", log.block_index);
+            row.set("log_address", hex0x(&log.address));
+            row.set("log_ordinal", log.ordinal);
+            row.set(
+                "log_topics",
+                log.topics.iter().map(|t| hex0x(t)).collect::<Vec<_>>().join(","),
+            );
+            row.set("log_data", hex0x(&log.data));
+            // transaction
+            row.set("tx_index", trace.index);
+            row.set("tx_hash", hex0x(&trace.hash));
+            row.set("tx_from", hex0x(&trace.from));
+            row.set("tx_to", hex0x(&trace.to));
+            row.set("tx_nonce", trace.nonce);
+            row.set("tx_gas_price", bigint_dec(trace.gas_price.as_ref()));
+            row.set("tx_gas_limit", trace.gas_limit);
+            row.set("tx_gas_used", trace.gas_used);
+            row.set("tx_value", bigint_dec(trace.value.as_ref()));
+            // event: ERC-8056 TransferWithScaledUI(from, to, value, uiValue)
+            row.set("from", hex0x(&log.topics[1][12..32]));
+            row.set("to", hex0x(&log.topics[2][12..32]));
+            row.set("amount", BigInt::from_unsigned_bytes_be(&log.data[0..32]).to_string());
+            row.set("ui_amount", BigInt::from_unsigned_bytes_be(&log.data[32..64]).to_string());
+        }
+    }
+
+    // blocks table — only when the block carried ≥1 transfer (mirrors Pinax)
+    if any {
+        let brow = tables.create_row("blocks", [("block_num", block_num.to_string())]);
+        brow.set("block_num", block_num);
+        brow.set("block_hash", &block_hash);
+        brow.set("timestamp", ts);
+        brow.set("minute", minute);
+    }
+
+    Ok(tables.to_database_changes())
+}
